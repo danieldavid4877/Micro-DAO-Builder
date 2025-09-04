@@ -56,6 +56,16 @@
     {dao-list: (list 100 uint)}
 )
 
+(define-map member-activity
+    {dao-id: uint, member: principal}
+    {
+        proposals-created: uint,
+        votes-cast: uint,
+        last-activity-block: uint,
+        reputation-score: uint
+    }
+)
+
 (define-public (create-dao (name (string-ascii 64)) (description (string-ascii 256)) (voting-period uint) (min-approval-percentage uint))
     (let
         (
@@ -82,6 +92,13 @@
             is-admin: true
         })
         
+        (map-set member-activity {dao-id: dao-id, member: creator} {
+            proposals-created: u0,
+            votes-cast: u0,
+            last-activity-block: stacks-block-height,
+            reputation-score: u100
+        })
+        
         (map-set user-daos creator {
             dao-list: (list dao-id)
         })
@@ -103,6 +120,13 @@
         (map-set dao-members {dao-id: dao-id, member: tx-sender} {
             joined-at: stacks-block-height,
             is-admin: false
+        })
+        
+        (map-set member-activity {dao-id: dao-id, member: tx-sender} {
+            proposals-created: u0,
+            votes-cast: u0,
+            last-activity-block: stacks-block-height,
+            reputation-score: u50
         })
         
         (map-set daos dao-id (merge dao-info {
@@ -131,6 +155,13 @@
         (map-set dao-members {dao-id: dao-id, member: new-member} {
             joined-at: stacks-block-height,
             is-admin: false
+        })
+        
+        (map-set member-activity {dao-id: dao-id, member: new-member} {
+            proposals-created: u0,
+            votes-cast: u0,
+            last-activity-block: stacks-block-height,
+            reputation-score: u50
         })
         
         (map-set daos dao-id (merge dao-info {
@@ -185,6 +216,20 @@
             executed: false
         })
         
+        (let
+            (
+                (current-activity (default-to 
+                    {proposals-created: u0, votes-cast: u0, last-activity-block: u0, reputation-score: u50} 
+                    (map-get? member-activity {dao-id: dao-id, member: tx-sender})
+                ))
+            )
+            (map-set member-activity {dao-id: dao-id, member: tx-sender} (merge current-activity {
+                proposals-created: (+ (get proposals-created current-activity) u1),
+                last-activity-block: stacks-block-height,
+                reputation-score: (+ (get reputation-score current-activity) u10)
+            }))
+        )
+        
         (var-set proposal-counter proposal-id)
         (ok proposal-id)
     )
@@ -212,6 +257,20 @@
             }))
             (map-set proposals proposal-id (merge proposal-info {
                 no-votes: (+ (get no-votes proposal-info) u1)
+            }))
+        )
+        
+        (let
+            (
+                (current-activity (default-to 
+                    {proposals-created: u0, votes-cast: u0, last-activity-block: u0, reputation-score: u50} 
+                    (map-get? member-activity {dao-id: (get dao-id proposal-info), member: tx-sender})
+                ))
+            )
+            (map-set member-activity {dao-id: (get dao-id proposal-info), member: tx-sender} (merge current-activity {
+                votes-cast: (+ (get votes-cast current-activity) u1),
+                last-activity-block: stacks-block-height,
+                reputation-score: (+ (get reputation-score current-activity) u5)
             }))
         )
         
@@ -293,6 +352,7 @@
         (asserts! (not (is-eq member-to-remove (get creator dao-info))) (err u411))
         
         (map-delete dao-members {dao-id: dao-id, member: member-to-remove})
+        (map-delete member-activity {dao-id: dao-id, member: member-to-remove})
         
         (map-set daos dao-id (merge dao-info {
             member-count: (- (get member-count dao-info) u1)
@@ -417,6 +477,29 @@
 
 (define-private (check-dao-membership (dao-id uint) (member principal))
     (is-some (map-get? dao-members {dao-id: dao-id, member: member}))
+)
+
+(define-read-only (get-member-activity (dao-id uint) (member principal))
+    (map-get? member-activity {dao-id: dao-id, member: member})
+)
+
+(define-read-only (get-member-reputation (dao-id uint) (member principal))
+    (match (map-get? member-activity {dao-id: dao-id, member: member})
+        activity-data (ok (get reputation-score activity-data))
+        ERR_NOT_MEMBER
+    )
+)
+
+(define-read-only (get-dao-top-members (dao-id uint))
+    (ok (list {member: tx-sender, reputation: u0}))
+)
+
+(define-private (check-member-reputation-for-dao (member principal) (accumulator {dao-id: uint, results: (list 10 {member: principal, reputation: uint})}))
+    (match (map-get? member-activity {dao-id: (get dao-id accumulator), member: member})
+        activity-data 
+            {dao-id: (get dao-id accumulator), results: (unwrap! (as-max-len? (append (get results accumulator) {member: member, reputation: (get reputation-score activity-data)}) u10) accumulator)}
+        accumulator
+    )
 )
 
 (define-public (create-simple-proposal (dao-id uint) (title (string-ascii 128)) (description (string-ascii 512)))
