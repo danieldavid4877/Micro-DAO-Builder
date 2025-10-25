@@ -7,6 +7,8 @@
 (define-constant ERR_VOTING_ENDED (err u407))
 (define-constant ERR_PROPOSAL_NOT_PASSED (err u408))
 (define-constant ERR_INSUFFICIENT_BALANCE (err u409))
+(define-constant ERR_CANNOT_DELEGATE_TO_SELF (err u412))
+(define-constant ERR_DELEGATION_CYCLE (err u413))
 
 (define-data-var dao-counter uint u0)
 (define-data-var proposal-counter uint u0)
@@ -49,6 +51,11 @@
 (define-map votes
     {proposal-id: uint, voter: principal}
     {vote: bool, voted-at: uint}
+)
+
+(define-map vote-delegations
+    {dao-id: uint, delegator: principal}
+    {delegate: principal, delegated-at: uint}
 )
 
 (define-map user-daos
@@ -540,4 +547,49 @@
             )
         accumulator
     )
+)
+
+(define-public (delegate-vote (dao-id uint) (delegate principal))
+    (let
+        (
+            (dao-info (unwrap! (map-get? daos dao-id) ERR_DAO_NOT_EXISTS))
+            (delegator-info (unwrap! (map-get? dao-members {dao-id: dao-id, member: tx-sender}) ERR_NOT_MEMBER))
+            (delegate-info (unwrap! (map-get? dao-members {dao-id: dao-id, member: delegate}) ERR_NOT_MEMBER))
+        )
+        (asserts! (not (is-eq tx-sender delegate)) ERR_CANNOT_DELEGATE_TO_SELF)
+        
+        (map-set vote-delegations {dao-id: dao-id, delegator: tx-sender} {
+            delegate: delegate,
+            delegated-at: stacks-block-height
+        })
+        
+        (ok true)
+    )
+)
+
+(define-public (revoke-delegation (dao-id uint))
+    (let
+        (
+            (dao-info (unwrap! (map-get? daos dao-id) ERR_DAO_NOT_EXISTS))
+            (delegator-info (unwrap! (map-get? dao-members {dao-id: dao-id, member: tx-sender}) ERR_NOT_MEMBER))
+            (delegation (unwrap! (map-get? vote-delegations {dao-id: dao-id, delegator: tx-sender}) (err u414)))
+        )
+        (map-delete vote-delegations {dao-id: dao-id, delegator: tx-sender})
+        (ok true)
+    )
+)
+
+(define-read-only (get-vote-delegate (dao-id uint) (member principal))
+    (map-get? vote-delegations {dao-id: dao-id, delegator: member})
+)
+
+(define-read-only (get-effective-voter (dao-id uint) (member principal))
+    (match (map-get? vote-delegations {dao-id: dao-id, delegator: member})
+        delegation-data (ok (get delegate delegation-data))
+        (ok member)
+    )
+)
+
+(define-read-only (count-delegators (dao-id uint) (delegate principal))
+    (ok u0)
 )
