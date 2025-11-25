@@ -9,6 +9,7 @@
 (define-constant ERR_INSUFFICIENT_BALANCE (err u409))
 (define-constant ERR_CANNOT_DELEGATE_TO_SELF (err u412))
 (define-constant ERR_DELEGATION_CYCLE (err u413))
+(define-constant ERR_PROPOSAL_HAS_VOTES (err u415))
 
 (define-data-var dao-counter uint u0)
 (define-data-var proposal-counter uint u0)
@@ -313,6 +314,20 @@
             
             (ok true)
         )
+    )
+)
+
+(define-public (cancel-proposal (proposal-id uint))
+    (let
+        (
+            (proposal-info (unwrap! (map-get? proposals proposal-id) ERR_PROPOSAL_NOT_EXISTS))
+            (has-votes (+ (get yes-votes proposal-info) (get no-votes proposal-info)))
+        )
+        (asserts! (is-eq tx-sender (get proposer proposal-info)) ERR_NOT_AUTHORIZED)
+        (asserts! (not (get executed proposal-info)) (err u410))
+        (asserts! (is-eq has-votes u0) ERR_PROPOSAL_HAS_VOTES)
+        (map-delete proposals proposal-id)
+        (ok true)
     )
 )
 
